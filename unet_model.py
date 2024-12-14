@@ -1,26 +1,18 @@
 """ Full assembly of the parts to form the complete network """
 import sys
 from unet_parts import *
-device = torch.device("cuda:1" if torch.cuda.is_available() else "mps")
-
-MLP = nn.Sequential(
-    nn.Linear(6, 100),
-    nn.ReLU(),
-    nn.Linear(100, 50),
-    nn.ReLU(),
-    nn.Linear(50, 18)
-)
 
 class FiLM(nn.Module):
   """
   A Feature-wise Linear Modulation Layer from
   'FiLM: Visual Reasoning with a General Conditioning Layer'
   """
-  def forward(self, x, params): #params has shape (N_batch, 2)
-    gammas = params[:,0]
-    betas = params[:,1]
-    gammas = gammas.unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(x)
-    betas = betas.unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(x)
+  def forward(self, x, params): #params has shape (N_batch, N_ch*2)
+    params = params.view(params.size(0), -1, 2) #(N_batch, N_ch, 2)
+    gammas = params[:, :, 0] 
+    betas = params[:, :, 1]
+    gammas = gammas.unsqueeze(2).unsqueeze(3).expand_as(x)
+    betas = betas.unsqueeze(2).unsqueeze(3).expand_as(x)
     return (gammas * x) + betas
 
 class UNetFiLM(nn.Module):
@@ -52,32 +44,39 @@ class UNetFiLM(nn.Module):
         self.up4 = (Up(128, 64, bilinear))
         self.outc = (OutConv(64, n_classes))
         self.film = FiLM()
+        self.MLP = nn.Sequential(
+                nn.Linear(6, 128),
+                nn.ReLU(),
+                nn.Linear(128, 512),
+                nn.ReLU(),
+                nn.Linear(512, 2048),
+                nn.ReLU(),
+                nn.Linear(2048, 5888)#*channel each layer
+                    )
         
 
     def forward(self, x, cond=None): #cond(6,)-->MLP score(N,)=weight+bias
-        param = MLP.to(cond.device)(cond)
-        print(cond.device)
+        param = self.MLP(cond)
         x = self.maybe_concat_fourier(x)    
         x1 = self.inc(x)
-        x1 = self.film(x1, param[:,:2])
+        x1 = self.film(x1, param[:,:128])
         x2 = self.down1(x1)
-        x2 = self.film(x2, param[:,2:4])
+        x2 = self.film(x2, param[:,128:384])
         x3 = self.down2(x2)
-        x3 = self.film(x3, param[:,4:6])
+        x3 = self.film(x3, param[:,384:896])
         x4 = self.down3(x3)
-        x4 = self.film(x4, param[:,6:8])
+        x4 = self.film(x4, param[:,896:1920])
         x5 = self.down4(x4)
-        x5 = self.film(x5, param[:,8:10])
+        x5 = self.film(x5, param[:,1920:3968])
         x = self.up1(x5, x4)
-        x = self.film(x, param[:,10:12])
+        x = self.film(x, param[:,3968:4992])
         x = self.up2(x, x3)
-        x = self.film(x, param[:,12:14])
+        x = self.film(x, param[:,4992:5504])
         x = self.up3(x, x2)
-        x = self.film(x, param[:,14:16])
+        x = self.film(x, param[:,5504:5760])
         x = self.up4(x, x1)
-        x = self.film(x, param[:,16:18])
+        x = self.film(x, param[:,5760:5888])
         logits = self.outc(x)
-        logits.to(device)
         return logits
 
 

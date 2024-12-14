@@ -89,7 +89,7 @@ class OutConv(nn.Module):
         k = torch.sqrt(kx**2 + ky**2)
     
         # Apply the high-pass filter
-        filter_mask = torch.exp(-k_h / (k + 1e-8))  # Add small constant to avoid division by zero
+        filter_mask = torch.exp(-k_h / (k + 1e-8))  # Add small constant to avoid division by zero 1-e^(-k^2/k_h^2)
         filter_mask[0, 0] = 0.0  # Set zero mode to zero
     
         # Perform Fourier transform, apply filter, and inverse transform
